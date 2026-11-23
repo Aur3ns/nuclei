@@ -1,0 +1,29 @@
+name: Nuclei redirect host-error regression validation
+on:
+  push:
+    branches:
+      - ci/redirect-host-errors-8190-validation
+  pull_request:
+    branches:
+      - dev
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  http-redirect-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Compile and run targeted redirect cache regression tests
+        run: go test -count=1 -run 'TestRecordHostResultRedirectFailureUsesDestination|TestRedirectFailureDoesNotPermanentlySkipOriginal' ./pkg/protocols/http
+      - name: Run regression tests with the race detector
+        run: go test -race -count=1 -run 'TestRecordHostResultRedirectFailureUsesDestination|TestRedirectFailureDoesNotPermanentlySkipOriginal' ./pkg/protocols/http
+      - name: Go vet HTTP package
+        run: go vet ./pkg/protocols/http
