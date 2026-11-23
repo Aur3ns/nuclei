@@ -10,6 +10,7 @@ import (
 	"io"
 	"maps"
 	"net"
+	"net/url"
 	"net/http"
 	"reflect"
 	"strconv"
@@ -2234,12 +2235,37 @@ func (request *Request) pruneSignatureInternalValues(maps ...map[string]interfac
 	}
 }
 
+// hostErrorInputForURL attributes a failed redirected request to the endpoint
+// actually dialed. A few early fastdialer errors (including unresolved hosts)
+// lack an "address" attribute, which would otherwise poison the healthy source.
+func hostErrorInputForURL(input *contextargs.Context, err error) *contextargs.Context {
+	if err == nil || errkit.GetAttrValue(err, "address").Any() != nil {
+		return input // Prefer the explicit address set by the transport.
+	}
+
+	var urlErr *url.Error
+	if !errors.As(err, &urlErr) {
+		return input
+	}
+	failedURL, parseErr := url.Parse(urlErr.URL)
+	if parseErr != nil || failedURL.Host == "" || (failedURL.Scheme != "http" && failedURL.Scheme != "https") {
+		return input
+	}
+
+	failedInput := contextargs.GetCopyIfAddressOutdated(input, failedURL.String())
+	if failedInput != input && !strings.EqualFold(failedInput.MetaInput.Hostname(), input.MetaInput.Hostname()) {
+		// An unrelated redirect host must not be keyed to a pinned target IP.
+		failedInput.MetaInput.CustomIP = ""
+	}
+	return failedInput
+}
+
 // recordHostResult updates the host-errors cache with the outcome of a request.
 // A failure is counted; a success resets the host, so only consecutive failures
 // with no success in between can mark a host unresponsive.
 func (request *Request) recordHostResult(input *contextargs.Context, err error) {
 	if request.options.HostErrorsCache != nil {
-		request.options.HostErrorsCache.MarkFailedOrRemove(request.options.ProtocolType.String(), input, err)
+		request.options.HostErrorsCache.MarkFailedOrRemove(request.options.ProtocolType.String(), hostErrorInputForURL(input, err), err)
 	}
 }
 
